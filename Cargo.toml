@@ -1,0 +1,9 @@
+[package]
+name = "diceval"
+version = "0.1.0"
+authors = ["Quan Brew <t@ioover.net>"]
+
+[dependencies]
+combine = "^3.5"
+failure = "^0.1.2"
+rand = "*"
