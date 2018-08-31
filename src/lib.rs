@@ -1,11 +1,11 @@
 extern crate combine;
-#[macro_use] extern crate failure;
+#[macro_use]
+extern crate failure;
 extern crate rand;
 
-
+mod evaluator;
 mod parser;
 pub mod types;
-mod evaluator;
 use types::Command;
 
 pub fn parse(s: String) -> Command {
@@ -19,7 +19,7 @@ pub fn eval(s: String) -> Result<(types::Num, String), failure::Error> {
         types::Command::Roll(e) => {
             let result = evaluator::eval_roll(&context, e)?;
             Ok(result)
-        },
+        }
         _ => Err(format_err!("unsupported")),
     }
 }
