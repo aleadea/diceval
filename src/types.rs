@@ -44,21 +44,7 @@ pub enum Expr {
     Dice(Dice),
     Num(Num),
     Variable(String),
-    Operator(Operator),
+    Operation(Operator, Box<Expr>),
     Description(String),
 }
 
-#[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
-pub struct Roll {
-    pub expr: Expr,
-    pub description: String,
-    pub comparison: Option<Num>,
-}
-
-#[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
-pub enum Command {
-    Roll(Vec<Expr>),
-    Unsupported,
-    Say(String),
-    Start,
-}

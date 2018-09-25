@@ -1,30 +1,16 @@
-use combine;
 use combine::error::ParseError;
 use combine::error::StreamError;
 use combine::parser::char::{space, string};
 use combine::stream::state::State;
 use combine::stream::StreamErrorFor;
-use combine::{choice, many, many1, optional, satisfy, skip_many, try, Parser, Stream};
+use combine::{choice, many, many1, optional, satisfy, skip_many, try, Parser, Stream, eof};
 use failure::Error;
-use types::{Command, Dice, Expr, Num, Operator};
+use types::{Dice, Expr, Num, Operator};
 
 macro_rules! or {
     ($($s:expr),+) => {$crate::combine::choice(($(try(string($s)),)+))};
 }
 
-macro_rules! parser {
-    ($($name: ident :: $Output: ty $block:block);+;) => {
-        $(
-            pub fn $name<I>() -> impl Parser<Input = I, Output = $Output>
-                where
-                    I: Stream<Item = char>,
-                    I::Error: ParseError<char, I::Range, I::Position>,
-            {
-                $block
-            }
-        )+
-    };
-}
 
 pub fn number<I>() -> impl Parser<Input = I, Output = Num>
 where
@@ -36,10 +22,11 @@ where
         .and_then(|s: String| {
             s.parse::<Num>()
                 .map_err(|_| StreamErrorFor::<I>::unexpected_message("fail to parse number"))
-        }).expected("number")
+        })
+        .expected("number")
 }
 
-pub fn dice<I>() -> impl Parser<Input = I, Output = Dice>
+pub fn dice<I>() -> impl Parser<Input = I, Output = Expr>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -47,24 +34,24 @@ where
     let d = or!["D", "d"].expected("the 'd' or 'D' in the XdY");
     let face = {
         let num = number().map(|n| Some(n));
-        let none = combine::skip_many1(space()).map(|_| None);
-        let eof = combine::eof().map(|_| None);
+        let none = space().map(|_| None);
+        let eof = eof().map(|_| None);
         choice((num, none, eof))
     };
-    optional(number()).skip(d).and(face).map(|(n, face)| Dice {
-        face,
-        number: n.unwrap_or(1),
-    })
+    optional(number()).skip(d).and(face)
+        .map(|(n, face)| Dice { face, number: n.unwrap_or(1) })
+        .map(Expr::Dice)
 }
 
-pub fn variable<I>() -> impl Parser<Input = I, Output = String>
+pub fn variable<I>() -> impl Parser<Input = I, Output = Expr>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
     use combine::char::{char, digit, letter};
-    let ident = choice((letter(), digit(), char('_'), char(':')));
-    char('.').with(many1(ident))
+    let identifier_char = choice((letter(), digit(), char('_'), char(':')));
+    let identifier = many1(identifier_char);
+    char('\'').with(identifier).map(Expr::Variable)
 }
 
 pub fn expr<I>() -> impl Parser<Input = I, Output = Expr>
@@ -73,79 +60,62 @@ where
     I::Error: ParseError<char, I::Range, I::Position>,
 {
     choice((
-        try(dice()).map(Expr::Dice),
-        try(operator()).map(Expr::Operator),
-        try(variable()).map(Expr::Variable),
+        try(dice()),
+        try(arithmetic()),
+        try(max_and_min()),
+        try(variable()),
         try(number()).map(Expr::Num),
-        description().map(Expr::Description),
+        description(),
     )).expected("an expression such as 1d100")
 }
 
-pub fn description<I>() -> impl Parser<Input = I, Output = String>
+pub fn description<I>() -> impl Parser<Input = I, Output = Expr>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    let some_char = satisfy(|c: char| !c.is_whitespace() && !c.is_control());
-    many1(some_char)
+    let some_char = satisfy(|c: char| !c.is_whitespace() && !c.is_control() && !c.is_numeric() && c != '\'');
+    many1(some_char).map(Expr::Description)
 }
 
-pub fn roll<I>() -> impl Parser<Input = I, Output = Command>
+pub fn roll<I>() -> impl Parser<Input = I, Output = Vec<Expr>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    many(expr().skip(skip_space())).map(|mut xs: Vec<_>| {
-        if xs.len() == 0 {
-            xs.push(Expr::Dice(Dice::default()));
-        }
-        Command::Roll(xs)
-    })
+    let expression = expr().skip(skip_many(space()));
+    many(expression)
 }
 
-parser!{
-    add :: Operator {
-        or!["+", "add", "ADD", "加"]
-            .map(|_| Operator::Add)
-    };
 
-    sub :: Operator {
-        or!["-", "sub", "减", "SUB"]
-            .map(|_| Operator::Sub)
-    };
-
-
-    mul :: Operator {
-        or!["*", "×", "x", "乘", "MUL", "mul"]
-            .map(|_| Operator::Mul)
-    };
-
-    div :: Operator {
-        or!["/", "÷", "除", "DIV", "div"]
-            .map(|_| Operator::Div)
-    };
-
-    max :: Operator {
-        or!["最大", "<=", "max", "MAX"]
-            .map(|_| Operator::Max)
-    };
-
-    min :: Operator {
-        or!["最小", ">=", "min", "MIN"]
-            .map(|_| Operator::Min)
-    };
-
-    operator :: Operator {
-        choice((add(), mul(), sub(), div(), max(), min()))
-            .expected("an operator such as +, -, *, /")
-    };
-
-    skip_space :: () {
-        skip_many(space())
-    };
+pub fn arithmetic<I>() -> impl Parser<Input = I, Output = Expr>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+{
+    let add = or!["+", "add", "ADD", "加"].map(|_| Operator::Add);
+    let sub = or!["-", "sub", "减", "SUB"].map(|_| Operator::Sub);
+    let mul = or!["*", "×", "x", "乘", "MUL", "mul"].map(|_| Operator::Mul);
+    let div = or!["/", "÷", "除", "DIV", "div"].map(|_| Operator::Div);
+    let simple_operator = choice((add, sub, mul, div));
+    let oprand = choice((try(dice()), try(variable()), try(max_and_min()), number().map(Expr::Num)));
+    (simple_operator, skip_many(space()), oprand)
+        .map(|(operator, _, expr)| Expr::Operation(operator, Box::new(expr)))
 }
 
-pub fn parse<T: AsRef<str>>(s: T) -> Result<Command, Error> {
+pub fn max_and_min<I>() -> impl Parser<Input = I, Output = Expr>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+{
+    let max = or!["最大", "max", "MAX"].map(|_| Operator::Max);
+    let min = or!["最小", "min", "MIN"].map(|_| Operator::Min);
+    let list_operator = choice((max, min));
+    (list_operator, skip_many(space()), dice())
+        .map(|(operator, _, expr)| Expr::Operation(operator, Box::new(expr)))
+}
+
+pub fn parse<T: AsRef<str>>(s: T) -> Result<Vec<Expr>, Error> {
     use combine::stream::IteratorStream;
     roll()
         .easy_parse(State::new(IteratorStream::new(s.as_ref().chars())))

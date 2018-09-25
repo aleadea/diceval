@@ -6,4 +6,3 @@ authors = ["Quan Brew <t@ioover.net>"]
 [dependencies]
 combine = "^3.5"
 failure = "^0.1.2"
-rand = "*"
