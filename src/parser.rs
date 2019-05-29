@@ -3,12 +3,12 @@ use combine::error::StreamError;
 use combine::parser::char::{space, string};
 use combine::stream::state::State;
 use combine::stream::StreamErrorFor;
-use combine::{choice, many, many1, optional, satisfy, skip_many, try, Parser, Stream, eof};
+use combine::{choice, many, many1, optional, satisfy, skip_many, attempt, Parser, Stream, eof};
 use failure::Error;
-use types::{Dice, Expr, Num, Operator};
+use super::types::{Dice, Expr, Num, Operator};
 
 macro_rules! or {
-    ($($s:expr),+) => {$crate::combine::choice(($(try(string($s)),)+))};
+    ($($s:expr),+) => {combine::choice(($(attempt(string($s)),)+))};
 }
 
 
@@ -60,11 +60,11 @@ where
     I::Error: ParseError<char, I::Range, I::Position>,
 {
     choice((
-        try(dice()),
-        try(arithmetic()),
-        try(max_and_min()),
-        try(variable()),
-        try(number()).map(Expr::Num),
+        attempt(dice()),
+        attempt(arithmetic()),
+        attempt(max_and_min()),
+        attempt(variable()),
+        attempt(number()).map(Expr::Num),
         description(),
     )).expected("an expression such as 1d100")
 }
@@ -98,7 +98,7 @@ where
     let mul = or!["*", "×", "x", "乘", "MUL", "mul"].map(|_| Operator::Mul);
     let div = or!["/", "÷", "除", "DIV", "div"].map(|_| Operator::Div);
     let simple_operator = choice((add, sub, mul, div));
-    let oprand = choice((try(dice()), try(variable()), try(max_and_min()), number().map(Expr::Num)));
+    let oprand = choice((attempt(dice()), attempt(variable()), attempt(max_and_min()), number().map(Expr::Num)));
     (simple_operator, skip_many(space()), oprand)
         .map(|(operator, _, expr)| Expr::Operation(operator, Box::new(expr)))
 }
