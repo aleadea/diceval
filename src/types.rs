@@ -39,12 +39,19 @@ impl Default for Dice {
     }
 }
 
+
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
 pub enum Expr {
-    Dice(Dice),
+    Prefix(Operator, Box<Expr>),
+    Infix(Box<Expr>, Operator, Box<Expr>),
     Num(Num),
-    Variable(String),
-    Operation(Operator, Box<Expr>),
+    Roll(Dice),
+}
+
+
+#[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
+pub enum Entity {
     Description(String),
+    Expr(Expr),
 }
 

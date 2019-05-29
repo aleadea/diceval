@@ -1,3 +1,6 @@
+use std::iter::Extend;
+use std::fmt::Debug;
+
 use combine::error::ParseError;
 use combine::error::StreamError;
 use combine::parser::char::{space, string};
@@ -5,11 +8,8 @@ use combine::stream::state::State;
 use combine::stream::StreamErrorFor;
 use combine::{choice, many, many1, optional, satisfy, skip_many, attempt, Parser, Stream, eof};
 use failure::Error;
-use super::types::{Dice, Expr, Num, Operator};
+use super::types::{Dice, Expr, Num, Operator, Entity};
 
-macro_rules! or {
-    ($($s:expr),+) => {combine::choice(($(attempt(string($s)),)+))};
-}
 
 
 pub fn number<I>() -> impl Parser<Input = I, Output = Num>
@@ -18,107 +18,115 @@ where
     I::Error: ParseError<char, I::Range, I::Position>,
 {
     use combine::char::digit;
-    many1(digit())
-        .and_then(|s: String| {
-            s.parse::<Num>()
-                .map_err(|_| StreamErrorFor::<I>::unexpected_message("fail to parse number"))
-        })
+    use combine::parser::repeat::count_min_max;
+
+    let parse_number = |s: String| s.parse::<Num>()
+        .map_err(|_| StreamErrorFor::<I>::unexpected_message("fail to parse number"));
+
+    count_min_max(1, 6, digit())
+        .and_then(parse_number)
         .expected("number")
 }
 
-pub fn dice<I>() -> impl Parser<Input = I, Output = Expr>
+pub fn dice<I>() -> impl Parser<Input = I, Output = Dice>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    let d = or!["D", "d"].expected("the 'd' or 'D' in the XdY");
-    let face = {
-        let num = number().map(|n| Some(n));
-        let none = space().map(|_| None);
-        let eof = eof().map(|_| None);
-        choice((num, none, eof))
+    use combine::{one_of, not_followed_by};
+    use combine::parser::char::letter;
+    let d = one_of("Dd".chars())
+        .expected("the 'd' or 'D' in the XdY");
+    let counter = optional(number());
+    let face = optional(number());
+    counter.skip(d).skip(not_followed_by(letter())).and(face)
+        .map(|(counter, face)| Dice { face, number: counter.unwrap_or(1) })
+}
+
+parser!{
+    fn expr[I]()(I) -> Expr
+    where [I: Stream<Item = char>]
+    {
+        expr_()
+    }
+}
+
+pub fn expr_<I>() -> impl Parser<Input = I, Output = Expr>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+{
+    use combine::{optional, between};
+    use combine::parser::char::{char, string};
+    let add = char('+').map(|_| Operator::Add);
+    let sub = char('-').map(|_| Operator::Sub);
+    let mul = char('*').map(|_| Operator::Mul);
+    let div = char('/').map(|_| Operator::Div);
+    let max = string("max").map(|_| Operator::Max);
+    let min = string("min").map(|_| Operator::Min);
+    
+    let infix = choice((add, sub, mul, div));
+    let prefix = choice((attempt(max), min));
+
+    let sub_expr = || choice((
+        between(char('('), char(')'), expr().skip(skip_many(space()))),
+        between(char('（'), char('）'), expr().skip(skip_many(space()))),
+    ));
+
+    let left_parser = choice((
+        attempt(dice().map(Expr::Roll)),
+        number().map(Expr::Num),
+        (prefix, sub_expr()).map(|(op, expr)| Expr::Prefix(op, Box::new(expr))),
+        sub_expr(),
+    ));
+    let rest = attempt(skip_many(space()).with(infix.and(expr())));
+
+    skip_many(space())
+        .with(left_parser)
+        .and(optional(rest))
+        .map(|(left, rest): (Expr, Option<(Operator, Expr)>)| match rest {
+            Some((op, right)) => Expr::Infix(Box::new(left), op, Box::new(right)),
+            None => left,
+        })
+}
+
+pub fn entity<I>() -> impl Parser<Input = I, Output = Entity>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+{
+    use combine::skip_many1;
+    use combine::parser::combinator::{recognize};
+    use combine::parser::item::{any, satisfy};
+    use combine::parser::char::digit;
+
+    let expression = expr().map(Entity::Expr);
+    let alphabetic = || satisfy(|c: char| c.is_alphabetic()).expected("tail character");
+    let whatever = any().map(|_| ());
+
+    let description = {
+        let number = skip_many1(digit());
+        let word = skip_many1(alphabetic());
+        let body = choice((word, number, whatever));
+        let tail = skip_many(space());
+        let pattern = (body, tail);
+        recognize(pattern).map(Entity::Description)
     };
-    optional(number()).skip(d).and(face)
-        .map(|(n, face)| Dice { face, number: n.unwrap_or(1) })
-        .map(Expr::Dice)
+    choice((attempt(expression), description))
 }
 
-pub fn variable<I>() -> impl Parser<Input = I, Output = Expr>
+
+pub fn entities<I>() -> impl Parser<Input = I, Output = Vec<Entity>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    use combine::char::{char, digit, letter};
-    let identifier_char = choice((letter(), digit(), char('_'), char(':')));
-    let identifier = many1(identifier_char);
-    char('\'').with(identifier).map(Expr::Variable)
+    many(entity())
 }
 
-pub fn expr<I>() -> impl Parser<Input = I, Output = Expr>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-{
-    choice((
-        attempt(dice()),
-        attempt(arithmetic()),
-        attempt(max_and_min()),
-        attempt(variable()),
-        attempt(number()).map(Expr::Num),
-        description(),
-    )).expected("an expression such as 1d100")
-}
-
-pub fn description<I>() -> impl Parser<Input = I, Output = Expr>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-{
-    let some_char = satisfy(|c: char| !c.is_whitespace() && !c.is_control() && !c.is_numeric() && c != '\'');
-    many1(some_char).map(Expr::Description)
-}
-
-pub fn roll<I>() -> impl Parser<Input = I, Output = Vec<Expr>>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-{
-    let expression = expr().skip(skip_many(space()));
-    many(expression)
-}
-
-
-pub fn arithmetic<I>() -> impl Parser<Input = I, Output = Expr>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-{
-    let add = or!["+", "add", "ADD", "加"].map(|_| Operator::Add);
-    let sub = or!["-", "sub", "减", "SUB"].map(|_| Operator::Sub);
-    let mul = or!["*", "×", "x", "乘", "MUL", "mul"].map(|_| Operator::Mul);
-    let div = or!["/", "÷", "除", "DIV", "div"].map(|_| Operator::Div);
-    let simple_operator = choice((add, sub, mul, div));
-    let oprand = choice((attempt(dice()), attempt(variable()), attempt(max_and_min()), number().map(Expr::Num)));
-    (simple_operator, skip_many(space()), oprand)
-        .map(|(operator, _, expr)| Expr::Operation(operator, Box::new(expr)))
-}
-
-pub fn max_and_min<I>() -> impl Parser<Input = I, Output = Expr>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-{
-    let max = or!["最大", "max", "MAX"].map(|_| Operator::Max);
-    let min = or!["最小", "min", "MIN"].map(|_| Operator::Min);
-    let list_operator = choice((max, min));
-    (list_operator, skip_many(space()), dice())
-        .map(|(operator, _, expr)| Expr::Operation(operator, Box::new(expr)))
-}
-
-pub fn parse<T: AsRef<str>>(s: T) -> Result<Vec<Expr>, Error> {
+pub fn parse<T: AsRef<str>>(s: T) -> impl Debug {
     use combine::stream::IteratorStream;
-    roll()
+    entities()
         .easy_parse(State::new(IteratorStream::new(s.as_ref().chars())))
         .map(|(x, _)| x)
-        .map_err(|e| e.into())
 }
