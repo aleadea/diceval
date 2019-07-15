@@ -1,4 +1,4 @@
-pub type Num = i64;
+pub type Int = i64;
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone, Copy)]
 pub enum Operator {
@@ -26,8 +26,8 @@ impl Operator {
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone, Copy)]
 pub struct Dice {
-    pub face: Option<Num>,
-    pub number: Num,
+    pub face: Option<Int>,
+    pub number: Int,
 }
 
 impl Default for Dice {
@@ -44,7 +44,7 @@ impl Default for Dice {
 pub enum Expr {
     Prefix(Operator, Box<Expr>),
     Infix(Box<Expr>, Operator, Box<Expr>),
-    Num(Num),
+    Num(Int),
     Roll(Dice),
 }
 
@@ -52,6 +52,6 @@ pub enum Expr {
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
 pub enum Entity {
     Description(String),
-    Expr(Expr),
+    Expression(Expr),
 }
 

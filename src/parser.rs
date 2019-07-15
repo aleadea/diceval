@@ -3,7 +3,7 @@ use combine::error::StreamError;
 use combine::stream::state::State;
 use combine::stream::StreamErrorFor;
 use combine::{choice, many, optional, attempt, Parser, Stream};
-use super::types::{Dice, Expr, Num, Operator, Entity};
+use super::types::{Dice, Expr, Int, Operator, Entity};
 
 
 pub fn insensitive_string<'a, I>(string: &'static str) -> impl Parser<Input = I, Output = &'a str>
@@ -29,7 +29,7 @@ where
 }
 
 
-pub fn number<I>() -> impl Parser<Input = I, Output = Num>
+pub fn number<I>() -> impl Parser<Input = I, Output =Int>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -37,7 +37,7 @@ where
     use combine::char::digit;
     use combine::parser::repeat::count_min_max;
 
-    let parse_number = |s: String| s.parse::<Num>()
+    let parse_number = |s: String| s.parse::<Int>()
         .map_err(|_| StreamErrorFor::<I>::unexpected_message("fail to parse number"));
 
     count_min_max(1, 6, digit())
@@ -45,6 +45,7 @@ where
         .expected("number")
 }
 
+/// Parse dice rolling.
 pub fn dice<I>() -> impl Parser<Input = I, Output = Dice>
 where
     I: Stream<Item = char>,
@@ -60,6 +61,9 @@ where
         .map(|(counter, face)| Dice { face, number: counter.unwrap_or(1) })
 }
 
+/// Infix operators with priority 1.
+///
+/// such as "+", "-".
 pub fn infix_1<I>() -> impl Parser<Input = I, Output = Operator>
 where
     I: Stream<Item = char>,
@@ -71,6 +75,9 @@ where
     choice((add, sub))
 }
 
+/// Infix operators with priority 2.
+///
+/// such as "*" "/".
 pub fn infix_2<I>() -> impl Parser<Input = I, Output = Operator>
 where
     I: Stream<Item = char>,
@@ -82,6 +89,7 @@ where
     choice((mul, div))
 }
 
+/// Prefix operators.
 pub fn prefix<I>() -> impl Parser<Input = I, Output = Operator>
 where
     I: Stream<Item = char>,
@@ -94,11 +102,12 @@ where
 }
 
 
+// recursive parser
 parser!{
-    fn expr_1[I]()(I) -> Expr
+    fn expr[I]()(I) -> Expr
     where [I: Stream<Item = char>]
     {
-        expr_1_()
+        expr_()
     }
 }
 
@@ -110,58 +119,83 @@ parser!{
     }
 }
 
-fn infix_mapper((left, rest): (Expr, Option<(Operator, Expr)>)) -> Expr {
+
+parser!{
+    fn terminal[I]()(I) -> Expr
+    where [I: Stream<Item = char>]
+    {
+        terminal_()
+    }
+}
+
+
+fn make_infix_expression((left, rest): (Expr, Option<(Operator, Expr)>)) -> Expr {
     match rest {
         Some((op, right)) => Expr::Infix(Box::new(left), op, Box::new(right)),
         None => left,
     }
 }
 
+
+pub fn terminal_<I>() -> impl Parser<Input = I, Output = Expr>
+    where
+        I: Stream<Item = char>,
+        I::Error: ParseError<char, I::Range, I::Position>,
+{
+    use combine::between;
+    use combine::parser::char::char;
+
+    // (...expr..)
+    let child_expr = || choice((
+        between(char('('), char(')'), expr().skip(skip_spaces())),
+        between(char('（'), char('）'), expr().skip(skip_spaces())),
+    ));
+
+    // max(...) min(...)
+    let prefix_expr = prefix()
+        .skip(skip_spaces())
+        .and(terminal())
+        .map(|(op, expr)| Expr::Prefix(op, Box::new(expr)));
+
+    // 1d20 | 42 | max(...) | (...)
+    choice((
+        attempt(dice().map(Expr::Roll)),
+        number().map(Expr::Num),
+        prefix_expr,
+        child_expr(),
+    ))
+}
+
+/// Parse higher priority expressions.
 pub fn expr_2_<I>() -> impl Parser<Input = I, Output = Expr>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    use combine::{optional, between};
-    use combine::parser::char::char;
-
-    let sub_expr = || choice((
-        between(char('('), char(')'), expr_1().skip(skip_spaces())),
-        between(char('（'), char('）'), expr_1().skip(skip_spaces())),
-    ));
-
-    let prefix_expr = prefix()
-        .skip(skip_spaces())
-        .and(sub_expr())
-        .map(|(op, expr)| Expr::Prefix(op, Box::new(expr)));
-
-    let left_parser = choice((
-        attempt(dice().map(Expr::Roll)),
-        number().map(Expr::Num),
-        prefix_expr,
-        sub_expr(),
-    ));
+    // rest part.
     let rest = skip_spaces().with(infix_2().and(expr_2()));
 
     skip_spaces()
-        .with(left_parser)
+        .with(terminal())
         .and(optional(attempt(rest)))
-        .map(infix_mapper)
+        .map(make_infix_expression)
 }
 
-pub fn expr_1_<I>() -> impl Parser<Input = I, Output = Expr>
+/// Parse expressions.
+pub fn expr_<I>() -> impl Parser<Input = I, Output = Expr>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    use combine::optional;
+    // remove left recursion
+    let rest = skip_spaces().with(infix_1().and(expr()));
 
-    let rest = skip_spaces().with(infix_1().and(expr_1()));
-
-   skip_spaces()
+    skip_spaces()
+        // get left expression.
         .with(expr_2())
+        // get lowest priority rest part. (operator + - and right)
         .and(optional(attempt(rest)))
-        .map(infix_mapper)
+        .map(make_infix_expression)
 }
 
 pub fn entity<I>() -> impl Parser<Input = I, Output = Entity>
@@ -174,16 +208,17 @@ where
     use combine::parser::item::{any, satisfy};
     use combine::parser::char::digit;
 
-    let expression = expr_1().map(Entity::Expr);
-    let alphabetic = || satisfy(|c: char| c.is_alphabetic()).expected("tail character");
-    let whatever = any().map(|_| ());
+    let expression = expr().map(Entity::Expression);
 
     let description = {
+        let alphabetic = || satisfy(|c: char| c.is_alphabetic()).expected("tail character");
+        let whatever = any().map(|_| ());
         let number = skip_many1(digit());
         let word = skip_many1(alphabetic());
         let body = choice((word, number, whatever));
         let tail = skip_spaces();
         let pattern = (body, tail);
+        // collect consumed tokens.
         recognize(pattern).map(Entity::Description)
     };
     choice((attempt(expression), description))
@@ -195,22 +230,20 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    many(entity())
-        .map(|entities: Vec<Entity>| {
-            let mut result = Vec::new();
-            for entity in entities {
-                if let Some(last) = result.last_mut() {
-                    if let Entity::Description(ref current) = entity {
-                        if let Entity::Description(prev) = last {
-                            prev.push_str(current);
-                            continue;
-                        }
-                    }
+    // concatenate adjacently description entities.
+    fn concatenate(mut entities: Vec<Entity>, entity: Entity) -> Vec<Entity> {
+        if let Some(last) = entities.last_mut() {
+            if let Entity::Description(ref current) = entity {
+                if let Entity::Description(prev) = last {
+                    prev.push_str(current);
+                    return entities;
                 }
-                result.push(entity);
             }
-            return result;
-        })
+        }
+        entities.push(entity);
+        return entities;
+    }
+    many(entity()).map(|entities: Vec<Entity>| entities.into_iter().fold(Vec::new(), concatenate))
 }
 
 pub fn parse<T: AsRef<str>>(s: T) -> Option<Vec<Entity>> {

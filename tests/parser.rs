@@ -1,8 +1,10 @@
 extern crate diceval;
 use diceval::types::*;
+use diceval::types::Entity::*;
+use diceval::types::Expr::*;
 
 
-fn dice(number: Num, face: Num) -> Dice {
+fn dice(number: Int, face: Int) -> Dice {
     Dice {
         face: Some(face),
         number,
@@ -10,7 +12,7 @@ fn dice(number: Num, face: Num) -> Dice {
 }
 
 fn roll(dice: Dice) -> Entity {
-    Entity::Expr(Expr::Roll(dice))
+    Entity::Expression(Expr::Roll(dice))
 }
 
 #[test]
@@ -79,17 +81,19 @@ fn description_and_roll1() {
 }
 
 fn add(l: Expr, r: Expr) -> Expr {
-    Expr::Infix(Box::new(l), Operator::Add, Box::new(r))
+    Infix(Box::new(l), Operator::Add, Box::new(r))
 }
 
 
 fn div(l: Expr, r: Expr) -> Expr {
-    Expr::Infix(Box::new(l), Operator::Div, Box::new(r))
+    Infix(Box::new(l), Operator::Div, Box::new(r))
 }
 
-fn number(n: Num) -> Expr {
-    Expr::Num(n)
+fn number(n: Int) -> Expr {
+    Num(n)
 }
+
+fn max(e: Expr) -> Expr { Prefix(Operator::Max, Box::new(e)) }
 
 #[test]
 fn expr() {
@@ -97,7 +101,7 @@ fn expr() {
     let y = number(1);
     let z = number(2);
 
-    let result = vec![Entity::Expr(add(x, div(y, z)))];
+    let result = vec![Expression(add(x, div(y, z)))];
     let parsed = diceval::parse("42+1/2".to_string()).unwrap();
     assert_eq!(parsed, result);
 
@@ -105,7 +109,7 @@ fn expr() {
     let x = number(42);
     let y = number(1);
     let z = number(2);
-    let result = vec![Entity::Expr(div(add(x, y), z))];
+    let result = vec![Expression(div(add(x, y), z))];
     let parsed = diceval::parse("( 42 + 1 ) / 2".to_string()).unwrap();
     assert_eq!(parsed, result);
 
@@ -114,7 +118,16 @@ fn expr() {
     let x = number(42);
     let y = number(1);
     let z = number(2);
-    let result = vec![Entity::Expr(add(x, add(y, z)))];
+    let result = vec![Expression(add(x, add(y, z)))];
     let parsed = diceval::parse("42 + 1 + 2".to_string()).unwrap();
+    assert_eq!(parsed, result);
+
+    let result = vec![Description("max max max".to_string())];
+    let parsed = diceval::parse("max max max".to_string()).unwrap();
+    assert_eq!(parsed, result);
+
+    let max_42 = max(number(42));
+    let result = vec![Expression(max(max(max_42)))];
+    let parsed = diceval::parse("max max max 42".to_string()).unwrap();
     assert_eq!(parsed, result);
 }
