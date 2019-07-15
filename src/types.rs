@@ -39,6 +39,17 @@ impl Default for Dice {
     }
 }
 
+impl Dice {
+    pub fn show(&self) -> String {
+        if let Some(face) = self.face {
+            format!("{}d{}", self.number, face)
+        }
+        else {
+            format!("{}d", self.number)
+        }
+    }
+}
+
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
 pub enum Expr {
@@ -46,6 +57,21 @@ pub enum Expr {
     Infix(Box<Expr>, Operator, Box<Expr>),
     Num(Int),
     Roll(Dice),
+    Child(Box<Expr>),
+}
+
+impl Expr {
+    pub fn show(&self) -> String {
+        use Expr::*;
+
+        match self {
+            Prefix(op, e) => format!("{} {}", op.show(), e.show()),
+            Infix(l, op, r) => format!("{} {} {}", l.show(), op.show(), r.show()),
+            Num(n) => format!("{}", n),
+            Roll(dice) => dice.show(),
+            Child(expr) => format!("({})", expr.show()),
+        }
+    }
 }
 
 
@@ -53,5 +79,16 @@ pub enum Expr {
 pub enum Entity {
     Description(String),
     Expression(Expr),
+}
+
+impl Entity {
+    pub fn show(&self) -> String {
+        use Entity::*;
+
+        match self {
+            Description(s) => s.clone(),
+            Expression(e) => e.show(),
+        }
+    }
 }
 

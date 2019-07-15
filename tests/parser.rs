@@ -95,6 +95,8 @@ fn number(n: Int) -> Expr {
 
 fn max(e: Expr) -> Expr { Prefix(Operator::Max, Box::new(e)) }
 
+fn child(e: Expr) -> Expr { Child(Box::new(e)) }
+
 #[test]
 fn expr() {
     let x = number(42);
@@ -109,7 +111,7 @@ fn expr() {
     let x = number(42);
     let y = number(1);
     let z = number(2);
-    let result = vec![Expression(div(add(x, y), z))];
+    let result = vec![Expression(div(child(add(x, y)), z))];
     let parsed = diceval::parse("( 42 + 1 ) / 2".to_string()).unwrap();
     assert_eq!(parsed, result);
 

@@ -2,7 +2,7 @@ use combine::error::ParseError;
 use combine::error::StreamError;
 use combine::stream::state::State;
 use combine::stream::StreamErrorFor;
-use combine::{choice, many, optional, attempt, Parser, Stream};
+use combine::{choice, many, optional, attempt, Parser, Stream, not_followed_by};
 use super::types::{Dice, Expr, Int, Operator, Entity};
 
 
@@ -29,6 +29,7 @@ where
 }
 
 
+/// Parse number which up to six digits as a number.
 pub fn number<I>() -> impl Parser<Input = I, Output =Int>
 where
     I: Stream<Item = char>,
@@ -41,6 +42,7 @@ where
         .map_err(|_| StreamErrorFor::<I>::unexpected_message("fail to parse number"));
 
     count_min_max(1, 6, digit())
+        .skip(not_followed_by(digit()))
         .and_then(parse_number)
         .expected("number")
 }
@@ -51,7 +53,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
 {
-    use combine::{one_of, not_followed_by};
+    use combine::one_of;
     use combine::parser::char::letter;
     let d = one_of("Dd".chars())
         .expected("the 'd' or 'D' in the XdY");
@@ -136,8 +138,7 @@ fn make_infix_expression((left, rest): (Expr, Option<(Operator, Expr)>)) -> Expr
     }
 }
 
-
-pub fn terminal_<I>() -> impl Parser<Input = I, Output = Expr>
+pub fn child_expr<I>() -> impl Parser<Input = I, Output = Expr>
     where
         I: Stream<Item = char>,
         I::Error: ParseError<char, I::Range, I::Position>,
@@ -145,12 +146,18 @@ pub fn terminal_<I>() -> impl Parser<Input = I, Output = Expr>
     use combine::between;
     use combine::parser::char::char;
 
-    // (...expr..)
-    let child_expr = || choice((
+    choice((
         between(char('('), char(')'), expr().skip(skip_spaces())),
         between(char('（'), char('）'), expr().skip(skip_spaces())),
-    ));
+    )).map(|e| Expr::Child(Box::new(e)))
+}
 
+
+pub fn terminal_<I>() -> impl Parser<Input = I, Output = Expr>
+    where
+        I: Stream<Item = char>,
+        I::Error: ParseError<char, I::Range, I::Position>,
+{
     // max(...) min(...)
     let prefix_expr = prefix()
         .skip(skip_spaces())
