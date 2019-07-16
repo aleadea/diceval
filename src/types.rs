@@ -1,4 +1,4 @@
-pub type Num = i64;
+pub type Int = i64;
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone, Copy)]
 pub enum Operator {
@@ -26,8 +26,8 @@ impl Operator {
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone, Copy)]
 pub struct Dice {
-    pub face: Option<Num>,
-    pub number: Num,
+    pub face: Option<Int>,
+    pub number: Int,
 }
 
 impl Default for Dice {
@@ -39,12 +39,56 @@ impl Default for Dice {
     }
 }
 
+impl Dice {
+    pub fn show(&self) -> String {
+        if let Some(face) = self.face {
+            format!("{}d{}", self.number, face)
+        }
+        else {
+            format!("{}d", self.number)
+        }
+    }
+}
+
+
 #[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
 pub enum Expr {
-    Dice(Dice),
-    Num(Num),
-    Variable(String),
-    Operation(Operator, Box<Expr>),
+    Prefix(Operator, Box<Expr>),
+    Infix(Box<Expr>, Operator, Box<Expr>),
+    Num(Int),
+    Roll(Dice),
+    Child(Box<Expr>),
+}
+
+impl Expr {
+    pub fn show(&self) -> String {
+        use Expr::*;
+
+        match self {
+            Prefix(op, e) => format!("{} {}", op.show(), e.show()),
+            Infix(l, op, r) => format!("{} {} {}", l.show(), op.show(), r.show()),
+            Num(n) => format!("{}", n),
+            Roll(dice) => dice.show(),
+            Child(expr) => format!("({})", expr.show()),
+        }
+    }
+}
+
+
+#[derive(Debug, PartialOrd, PartialEq, Eq, Ord, Hash, Clone)]
+pub enum Entity {
     Description(String),
+    Expression(Expr),
+}
+
+impl Entity {
+    pub fn show(&self) -> String {
+        use Entity::*;
+
+        match self {
+            Description(s) => s.clone(),
+            Expression(e) => e.show(),
+        }
+    }
 }
 

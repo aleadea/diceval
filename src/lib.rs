@@ -1,5 +1,5 @@
+#[macro_use]
 extern crate combine;
-extern crate failure;
 
 pub mod parser;
 pub mod types;
